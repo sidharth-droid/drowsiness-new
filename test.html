@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Drowsiness Detection</title>
+  <style>
+    body { background: #1a1a1a; color: #eee; text-align: center; font-family: sans-serif; }
+    video { border-radius: 10px; margin-top: 1rem; }
+    #status { margin-top: 1rem; font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Drowsiness Detection - Browser</h1>
+  <video id="video" width="640" height="480" autoplay muted playsinline></video>
+  <div id="status">Loading model...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/facemesh"></script>
+
+  <script>
+    const video = document.getElementById("video");
+    const statusEl = document.getElementById("status");
+
+    const leftEyeIndices = [33, 160, 158, 133, 153, 144];
+    const rightEyeIndices = [263, 387, 385, 362, 380, 373];
+    const mouthIndices = [78, 81, 13, 311, 308, 402, 14, 178, 88, 95, 185, 61];
+
+    function euclideanDistance(a, b) {
+      return Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+
+    function eyeAspectRatio(eye) {
+      const A = euclideanDistance(eye[1], eye[5]);
+      const B = euclideanDistance(eye[2], eye[4]);
+      const C = euclideanDistance(eye[0], eye[3]);
+      return (A + B) / (2.0 * C);
+    }
+
+    function mouthAspectRatio(mouth) {
+      const A = euclideanDistance(mouth[2], mouth[10]);
+      const B = euclideanDistance(mouth[4], mouth[8]);
+      const C = euclideanDistance(mouth[0], mouth[6]);
+      return (A + B) / (2.0 * C);
+    }
+
+    function getPoints(indices, keypoints) {
+      return indices.map(i => [keypoints[i][0], keypoints[i][1]]);
+    }
+
+    function detectDrowsiness(keypoints) {
+      const leftEye = getPoints(leftEyeIndices, keypoints);
+      const rightEye = getPoints(rightEyeIndices, keypoints);
+      const mouth = getPoints(mouthIndices, keypoints);
+
+      const ear = (eyeAspectRatio(leftEye) + eyeAspectRatio(rightEye)) / 2.0;
+      const mar = mouthAspectRatio(mouth);
+
+      const EAR_THRESHOLD = 0.25;
+      const MAR_THRESHOLD = 0.6;
+
+      let status = "Awake";
+      if (ear < EAR_THRESHOLD || mar > MAR_THRESHOLD) {
+        status = "Drowsy";
+      }
+
+      return { status, ear, mar };
+    }
+
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      return new Promise(resolve => {
+        video.onloadedmetadata = () => { resolve(video); };
+      });
+    }
+
+    async function main() {
+      await setupCamera();
+      const model = await facemesh.load();
+      statusEl.innerText = "Model loaded, starting detection...";
+
+      async function detect() {
+        const predictions = await model.estimateFaces(video, false);
+        if (predictions.length > 0) {
+          const keypoints = predictions[0].scaledMesh;
+          const { status, ear, mar } = detectDrowsiness(keypoints);
+          statusEl.innerText = `Status: ${status} (EAR: ${ear.toFixed(3)}, MAR: ${mar.toFixed(3)})`;
+          if (status === "Drowsy") {
+            statusEl.style.color = "#f44336"; // red
+          } else {
+            statusEl.style.color = "#4caf50"; // green
+          }
+        } else {
+          statusEl.innerText = "Face not detected";
+          statusEl.style.color = "#ccc";
+        }
+        requestAnimationFrame(detect);
+      }
+
+      detect();
+    }
+
+    main();
+  </script>
+</body>
+</html>
